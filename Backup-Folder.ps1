@@ -79,54 +79,59 @@ if (-not (Get-Partition | Where-Object DriveLetter -eq $driveLetter)) {
 }
 
 # ========================================
-# Показать окно "Идёт копирование"
+# Показать окно "Идёт копирование" с кнопкой "Отмена"
 # ========================================
-
+Write-Host "Для отмены копирования нажмите Ctrl+C в этом окне"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
+
+# Глобальная переменная для отслеживания отмены
+$Global:CancelBackup = $false
 
 # Создаём форму
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "Выполнение копирования"
-$form.Size = New-Object System.Drawing.Size(400, 150)
-$form.StartPosition = "CenterScreen"  # Окно по центру экрана
+$form.Size = New-Object System.Drawing.Size(450, 180)
+$form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
-$form.MaximizeBox = $false            # Без кнопки максимизации
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.TopMost = $true  # Поверх всех окон
 
-# Добавляем метку (подпись)
+# Метка
 $label = New-Object System.Windows.Forms.Label
-$label.Text = "Производится резервное копирование, пожалуйста не монтируйте и не извлекайте диск"
-$label.Location = New-Object System.Drawing.Point(30, 20)
-$label.Size = New-Object System.Drawing.Size(300, 30)
+$label.Text = "Производится резервное копирование, пожалуйста, не извлекайте диск"
+$label.Location = New-Object System.Drawing.Point(20, 20)
+$label.Size = New-Object System.Drawing.Size(400, 30)
 $form.Controls.Add($label)
 
 # Прогресс-бар
 $progressBar = New-Object System.Windows.Forms.ProgressBar
-$progressBar.Location = New-Object System.Drawing.Point(20, 70)
-$progressBar.Size = New-Object System.Drawing.Size(340, 30)
+$progressBar.Location = New-Object System.Drawing.Point(20, 60)
+$progressBar.Size = New-Object System.Drawing.Size(400, 30)
 $progressBar.Minimum = 0
 $progressBar.Maximum = 100
 $progressBar.Value = 0
-$progressBar.Step = 1
 $form.Controls.Add($progressBar)
+
 
 # Показываем форму
 $form.Show()
 $form.Refresh()
 
+# Ловим Ctrl+C или закрытие окна
 trap {
-    if ($form){
-        $form.Close()
+    $Global:CancelBackup = $true
+    if ($process -and !$process.HasExited) {
+        $process.Kill()
     }
+    if ($form) { $form.Close() }
 }
 
 
 # Получить размер диска
 try {
     $partition = Get-Partition -DriveLetter $driveLetter
-	if (-not $partition) {
-        throw "Раздел с буквой диска $driveLetter не найден."
-    }
     $diskSize = $partition.Size
     $diskSizeMB = [math]::Round($diskSize / 1MB)
 }
@@ -148,10 +153,10 @@ $outputFile = Join-Path $backupFolder "Резервная_копия_диска_
 $source = "\\.\${driveLetter}:"
 $arguments = "if=`"$source`" of=`"$outputFile`" bs=${blockSize}M --progress"
 
-# === ЗАПУСК DD С КОНТРОЛЕМ ПРОГРЕССА ===
+# === ЗАПУСК DD С КОНТРОЛЕМ ПРОГРЕССА И ОТМЕНОЙ ===
 $psi = New-Object System.Diagnostics.ProcessStartInfo
 $psi.FileName = $ddPath
-$psi.Arguments = $arguments
+$psi.Arguments = "if=\\.\${driveLetter}: of=`"$outputFile`" bs=${blockSize}M --progress"
 $psi.UseShellExecute = $false
 $psi.RedirectStandardOutput = $true
 $psi.RedirectStandardError = $true
@@ -160,37 +165,50 @@ $psi.CreateNoWindow = $true
 $process = New-Object System.Diagnostics.Process
 $process.StartInfo = $psi
 $process.Start() | Out-Null
-$process.PriorityClass = "Idle"  # Чтобы не нагружать систему
+$process.PriorityClass = "Idle"
 
-# Переменная для отслеживания обработанных байтов
-$processedBytes = 0
+# Переменная для отслеживания прогресса
+$processedMB = 0
 
-# Читаем stderr (там выводится прогресс от dd)
+# Читаем stderr построчно (там выводится прогресс)
 while (!$process.StandardError.EndOfStream) {
-    $line = $process.StandardError.ReadLine()
-    if ($line) {
-        if ($line -match '(\d+)M') {
-            $captured = $matches[1]
-            $processedBytes = [long]$captured
-
-            # Обновляем прогресс-бар
-            $percent = [Math]::Min(100, [Math]::Floor(($processedBytes / $diskSizeMB) * 100))
-			if ($percent -gt 100) {
-				$progressBar.Value = 100
-			}
-			else {
-            $progressBar.Value = $percent
-            $form.Refresh()
-			}
+    # Проверяем, запрошена ли отмена
+    if ($Global:CancelBackup) {
+        if (!$process.HasExited) {
+            $process.Kill()  # Прерываем dd
         }
+        break
+    }
+
+    $line = $process.StandardError.ReadLine()
+    if ($line -match '(\d+)M') {
+        $processedMB = [int]$matches[1]
+        $percent = [Math]::Min(100, [Math]::Floor(($processedMB * 1MB) / $diskSize * 100))
+        $progressBar.Value = $percent
+        $form.Refresh()
     }
 }
 
-# Дожидаемся завершения
-$process.WaitForExit()
+# Дожидаемся завершения (или принудительного завершения)
+if (!$process.HasExited) {
+    $process.WaitForExit(2000)  # Ждём 2 секунды
+    if (!$process.HasExited) {
+        $process.Kill()
+    }
+}
 
-# Теперь можно получить код выхода
+# Завершаем
 $exitCode = $process.ExitCode
+$form.Close()
+
+# Если отменено пользователем
+if ($Global:CancelBackup) {
+    if (Test-Path $outputFile) {
+        Remove-Item $outputFile -Force
+    }
+    Write-Host "Копирование отменено пользователем."
+    exit 0
+}
 
 if (Test-Path $outputFile) {
 	# Получаем размер образа
@@ -212,7 +230,7 @@ if (Test-Path $outputFile) {
 	}
 	$progressBar.Value = 100
 	$form.Close()
-	Write-Host "Файл существует"
+	Write-Host "Резервная копия создана"
 	# Подключаем библиотеки
 	Add-Type -AssemblyName System.Windows.Forms
 	Add-Type -AssemblyName System.Drawing
@@ -248,7 +266,7 @@ if (Test-Path $outputFile) {
 	# Показываем окно и ждём нажатия
 	$form2.ShowDialog() | Out-Null
 } else {
-    Write-Host "Файл не найден"
-	Show-RetryDialog -Message "Не удалось сделать резервную копию диска ${driveLetter}, убедитесь, что диск не смонтирован в TrueCrypt"
+    Write-Host "Резервная копия не создана"
+	Show-RetryDialog -Message "Не удалось сделать резервную копию диска ${driveLetter}, убедитесь, что диск вставлен и не смонтирован в TrueCrypt"
 	exit 1
 }
