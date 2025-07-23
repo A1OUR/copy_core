@@ -1,6 +1,33 @@
 ﻿# Настройка кодировки для текущей сессии
 [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding("windows-1251")
+# Отключаем кнопку "Закрыть" (крестик) в заголовке окна
+Function _Disable-X {
+    #Calling user32.dll methods for Windows and Menus
+    $MethodsCall = '
+    [DllImport("user32.dll")] public static extern long GetSystemMenu(IntPtr hWnd, bool bRevert);
+    [DllImport("user32.dll")] public static extern bool EnableMenuItem(long hMenuItem, long wIDEnableItem, long wEnable);
+    [DllImport("user32.dll")] public static extern long SetWindowLongPtr(long hWnd, long nIndex, long dwNewLong);
+    [DllImport("user32.dll")] public static extern bool EnableWindow(long hWnd, int bEnable);
+    '
 
+    $SC_CLOSE = 0xF060
+    $MF_DISABLED = 0x00000002L
+
+
+    #Create a new namespace for the Methods to be able to call them
+    Add-Type -MemberDefinition $MethodsCall -name NativeMethods -namespace Win32
+
+    $PSWindow = Get-Process -Pid $PID
+    $hwnd = $PSWindow.MainWindowHandle
+
+    #Get System menu of windows handled
+    $hMenu = [Win32.NativeMethods]::GetSystemMenu($hwnd, 0)
+
+    #Disable X Button
+    [Win32.NativeMethods]::EnableMenuItem($hMenu, $SC_CLOSE, $MF_DISABLED) | Out-Null
+}
+
+_Disable-X
 # === Настройки ===
 $rootPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $configPath = Join-Path $rootPath "config.json"
@@ -19,7 +46,7 @@ function Show-RetryDialog {
     param(
         [string]$Message = "Произошла ошибка при выполнении резервного копирования."
     )
-	$form.Close()
+	if ($form) { $form.Close() }
     Add-Type -AssemblyName System.Windows.Forms
 
     $form = New-Object System.Windows.Forms.Form
@@ -72,15 +99,43 @@ if (-not (Test-Path $ddPath)) {
     exit 1
 }
 
-# Проверка, существует ли H:
-if (-not (Get-Partition | Where-Object DriveLetter -eq $driveLetter)) {
-    Show-RetryDialog -Message "Не удалось подключить том ${driveLetter}:. Убедитесь, что диск вставлен"
+
+$outputFile = Join-Path $backupFolder "Temp.img"
+# Получить размер диска
+try {
+    $partition = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop
+	if (-not $partition) {
+        throw "Раздел с буквой диска $driveLetter не найден."
+	}
+    $diskSize = $partition.Size
+    $diskSizeMB = [Math]::Round($diskSize / 1MB)
+
+    Write-Host "Размер диска ${driveLetter}: составляет ${diskSizeMB} МБ"
+
+    # Проверка: хватит ли места для сохранения файла образа
+    $outputDir = Split-Path -Path $outputFile -Parent
+
+    # Получаем диск, на котором будет сохраняться файл
+    $outputDriveLetter = (Get-Item $outputDir).PSDrive.Name
+    $outputPSDrive = Get-PSDrive -Name $outputDriveLetter -PSProvider FileSystem -ErrorAction Stop
+    $freeSpace = $outputPSDrive.Free
+
+    if ($freeSpace -lt $diskSize) {
+        $requiredMB = [Math]::Round($diskSize / 1MB)
+        $availableMB = [Math]::Round($freeSpace / 1MB)
+        Show-RetryDialog -Message "Недостаточно места для сохранения образа. Требуется ${requiredMB} МБ, но на диске ${outputDriveLetter}: свободно только ${availableMB} МБ."
+        exit 1
+    }
+}
+catch {
+	Show-RetryDialog -Message "Не удалось подключить том ${driveLetter}:. Убедитесь, что диск вставлен."
     exit 1
 }
 
 # ========================================
-# Показать окно "Идёт копирование" с кнопкой "Отмена"
+# Показать окно "Идёт копирование"
 # ========================================
+Write-Host "НЕ ЗАКРЫВАЙТЕ ЭТО ОКНО ПОКА ИДЁТ КОПИРОВАНИЕ"
 Write-Host "Для отмены копирования нажмите Ctrl+C в этом окне"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -97,7 +152,10 @@ $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
 $form.TopMost = $true  # Поверх всех окон
-
+$form.ControlBox = $false
+$form.Add_Closing({
+    $_.Cancel = $true
+})
 # Метка
 $label = New-Object System.Windows.Forms.Label
 $label.Text = "Производится резервное копирование, пожалуйста, не извлекайте диск"
@@ -128,18 +186,6 @@ trap {
     if ($form) { $form.Close() }
 }
 
-
-# Получить размер диска
-try {
-    $partition = Get-Partition -DriveLetter $driveLetter
-    $diskSize = $partition.Size
-    $diskSizeMB = [math]::Round($diskSize / 1MB)
-}
-catch {
-    Show-RetryDialog -Message "Не удалось подключить том ${driveLetter}:. Убедитесь, что диск вставлен"
-    exit 1
-}
-
 # Создаём папку
 if (-not (Test-Path $backupFolder)) {
     New-Item -ItemType Directory -Path $backupFolder -Force | Out-Null
@@ -147,7 +193,10 @@ if (-not (Test-Path $backupFolder)) {
 
 # Имя файла
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-$outputFile = Join-Path $backupFolder "Резервная_копия_диска_${driveLetter}_${timestamp}.img"
+if (Test-Path $outputFile) {
+	Remove-Item $outputFile -Force
+}
+$outputFileFinal = Join-Path $backupFolder "Резервная_копия_диска_${driveLetter}_${timestamp}.img"
 
 # Команда
 $source = "\\.\${driveLetter}:"
@@ -172,13 +221,6 @@ $processedMB = 0
 
 # Читаем stderr построчно (там выводится прогресс)
 while (!$process.StandardError.EndOfStream) {
-    # Проверяем, запрошена ли отмена
-    if ($Global:CancelBackup) {
-        if (!$process.HasExited) {
-            $process.Kill()  # Прерываем dd
-        }
-        break
-    }
 
     $line = $process.StandardError.ReadLine()
     if ($line -match '(\d+)M') {
@@ -201,15 +243,6 @@ if (!$process.HasExited) {
 $exitCode = $process.ExitCode
 $form.Close()
 
-# Если отменено пользователем
-if ($Global:CancelBackup) {
-    if (Test-Path $outputFile) {
-        Remove-Item $outputFile -Force
-    }
-    Write-Host "Копирование отменено пользователем."
-    exit 0
-}
-
 if (Test-Path $outputFile) {
 	# Получаем размер образа
 	$imageSize = (Get-Item $outputFile).Length
@@ -230,6 +263,7 @@ if (Test-Path $outputFile) {
 	}
 	$progressBar.Value = 100
 	$form.Close()
+	Rename-Item -Path $outputFile -NewName (Split-Path $outputFileFinal -Leaf)
 	Write-Host "Резервная копия создана"
 	# Подключаем библиотеки
 	Add-Type -AssemblyName System.Windows.Forms
