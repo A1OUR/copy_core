@@ -2,23 +2,109 @@
 [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding("windows-1251")
 
 # === Настройки ===
-$driveLetter = "H"
-$backupFolder = "F:\workfolder\copy_test"
-$ddPath = "F:\workfolder\copy_core\dd.exe" 
+$rootPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$configPath = Join-Path $rootPath "config.json"
+$config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
+
+$driveLetter = $config.driveLetter
+$backupFolder = $config.backupFolder
+$blockSize = $config.blockSize
+$ddPath = $config.ddPath
+
+$backupScriptName = $config.backupScriptName
+$scriptPath = Join-Path $rootPath $backupScriptName
 
 # ========================================
+# ========================================
+# Функция: Показать окно "Идёт копирование"
+# ========================================
+
+Add-Type -AssemblyName System.Windows.Forms
+
+# Создаём форму
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Выполнение копирования"
+$form.Size = New-Object System.Drawing.Size(350, 150)
+$form.StartPosition = "CenterScreen"  # Окно по центру экрана
+$form.FormBorderStyle = 'FixedSingle' # Фиксированный размер
+$form.MaximizeBox = $false            # Без кнопки максимизации
+
+# Добавляем метку (подпись)
+$label = New-Object System.Windows.Forms.Label
+$label.Text = "Производится резервное копирование, пожалуйста не монтируйте и не извлекайте диск"
+$label.Location = New-Object System.Drawing.Point(30, 40)
+$label.Size = New-Object System.Drawing.Size(300, 23)
+$form.Controls.Add($label)
+
+# Показываем форму
+$form.Show()
+
+trap {
+    $form.Close()
+    exit 1
+}
+
+# Функция: Показать окно с кнопкой "Повторить"
+function Show-RetryDialog {
+    param(
+        [string]$Message = "Произошла ошибка при выполнении резервного копирования."
+    )
+	$form.Close()
+    Add-Type -AssemblyName System.Windows.Forms
+
+    $form = New-Object System.Windows.Forms.Form
+    $form.Text = "Ошибка резервного копирования"
+    $form.Size = New-Object System.Drawing.Size(400, 180)
+    $form.StartPosition = "CenterScreen"
+    $form.FormBorderStyle = "FixedDialog"
+    $form.TopMost = $true
+    $form.MaximizeBox = $false
+    $form.MinimizeBox = $false
+
+    $label = New-Object System.Windows.Forms.Label
+    $label.Location = New-Object System.Drawing.Point(20, 20)
+    $label.Size = New-Object System.Drawing.Size(350, 40)
+    $label.Text = $Message
+    $form.Controls.Add($label)
+
+    $buttonRetry = New-Object System.Windows.Forms.Button
+    $buttonRetry.Location = New-Object System.Drawing.Point(120, 70)
+    $buttonRetry.Size = New-Object System.Drawing.Size(100, 30)
+    $buttonRetry.Text = "Повторить"
+    $buttonRetry.DialogResult = [System.Windows.Forms.DialogResult]::Retry
+    $form.Controls.Add($buttonRetry)
+
+    $buttonExit = New-Object System.Windows.Forms.Button
+    $buttonExit.Location = New-Object System.Drawing.Point(230, 70)
+    $buttonExit.Size = New-Object System.Drawing.Size(100, 30)
+    $buttonExit.Text = "Выход"
+    $buttonExit.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+    $form.Controls.Add($buttonExit)
+
+    $form.AcceptButton = $buttonRetry
+    $form.CancelButton = $buttonExit
+
+    $result = $form.ShowDialog()
+
+    if ($result -eq [System.Windows.Forms.DialogResult]::Retry) {
+        # Перезапускаем текущий скрипт
+        & powershell -ExecutionPolicy Bypass -File "`"$scriptPath`""
+        exit 0
+    } else {
+        exit 1
+    }
+}
+
 
 # Проверка dd.exe
 if (-not (Test-Path $ddPath)) {
-    Write-Error "Не найден dd.exe: $ddPath"
-    pause
+    Show-RetryDialog -Message "Не найден dd.exe: $ddPath"
     exit 1
 }
 
 # Проверка, существует ли H:
 if (-not (Get-Partition | Where-Object DriveLetter -eq $driveLetter)) {
-    Write-Error "Том ${driveLetter}: не найден!"
-    pause
+    Show-RetryDialog -Message "Не удалось подключить том ${driveLetter}:. Убедитесь, что диск вставлен"
     exit 1
 }
 
@@ -33,19 +119,15 @@ $outputFile = Join-Path $backupFolder "Резервная_копия_диска_
 
 # Команда
 $source = "\\.\${driveLetter}:"
-$arguments = "if=`"$source`" of=`"$outputFile`" bs=1M --progress"
+$arguments = "if=`"$source`" of=`"$outputFile`" bs=${blockSize} --progress"
 
 # Запуск
+
 Start-Process -FilePath $ddPath -ArgumentList $arguments -Wait -NoNewWindow
-
-# Проверка результата
 if (Test-Path $outputFile) {
-    $sizeMB = [math]::Round((Get-Item $outputFile).Length / 1MB, 1)
-    Write-Host "✅ Успех! Создан образ зашифрованного тома:" -ForegroundColor Green
-    Write-Host "    Размер: $sizeMB МБ" -ForegroundColor Green
-    Write-Host "    Файл: $outputFile" -ForegroundColor Green
+    Write-Host "Файл существует"
 } else {
-    Write-Error "❌ Ошибка: файл не создан"
+    Write-Host "Файл не найден"
+	Show-RetryDialog -Message "Не удалось сделать резервную копию диска ${driveLetter}, убедитесь, что диск не смонтирован в TrueCrypt"
+	exit 1
 }
-
-pause

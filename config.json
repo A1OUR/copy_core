@@ -1,5 +1,7 @@
 {
 	"driveLetter": "H",
 	"backupFolder": "F:\\workfolder\\copy_test",
+	"blockSize": "1M",
+    "backupScriptName": "Backup-Folder.ps1",
 	"ddPath": "F:\\workfolder\\copy_core\\dd.exe"
 }
