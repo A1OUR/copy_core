@@ -26,7 +26,7 @@ $form = New-Object System.Windows.Forms.Form
 $form.Text = "Выполнение копирования"
 $form.Size = New-Object System.Drawing.Size(350, 150)
 $form.StartPosition = "CenterScreen"  # Окно по центру экрана
-$form.FormBorderStyle = 'FixedSingle' # Фиксированный размер
+$form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false            # Без кнопки максимизации
 
 # Добавляем метку (подпись)
@@ -125,7 +125,53 @@ $arguments = "if=`"$source`" of=`"$outputFile`" bs=${blockSize} --progress"
 
 Start-Process -FilePath $ddPath -ArgumentList $arguments -Wait -NoNewWindow
 if (Test-Path $outputFile) {
-    Write-Host "Файл существует"
+	# Получаем размер образа
+	$imageSize = (Get-Item $outputFile).Length
+	$partition = Get-Partition -DriveLetter $driveLetter
+	$diskSize = $partition.Size
+
+	# Сравнение
+	if ($imageSize -ne $diskSize) {
+		Show-RetryDialog -Message "Размер резервной копии не совпадает с размером диска, возможно диск был отключён во время копирования или закончилось место для резервных копий"
+		exit 1
+	}
+	else {
+		Write-Host "Файл существует"
+		# Подключаем библиотеки
+		Add-Type -AssemblyName System.Windows.Forms
+		Add-Type -AssemblyName System.Drawing
+
+		# Создаём форму
+		$form2 = New-Object System.Windows.Forms.Form
+		$form2.Text = "Информация"
+		$form2.Size = New-Object System.Drawing.Size(300, 150)
+		$form2.StartPosition = "CenterScreen"
+		$form2.TopMost = $true
+		$form2.FormBorderStyle = "FixedDialog"  # Нельзя изменять размер
+		$form2.MaximizeBox = $false
+		$form2.MinimizeBox = $false
+
+		# Метка (текст)
+		$label2 = New-Object System.Windows.Forms.Label
+		$label2.Location = New-Object System.Drawing.Point(30, 30)
+		$label2.Size = New-Object System.Drawing.Size(250, 40)
+		$label2.Text = "Резервное копирование завершено"
+		$form2.Controls.Add($label2)
+
+		# Кнопка "ОК"
+		$buttonOK = New-Object System.Windows.Forms.Button
+		$buttonOK.Location = New-Object System.Drawing.Point(100, 80)
+		$buttonOK.Size = New-Object System.Drawing.Size(100, 30)
+		$buttonOK.Text = "ОК"
+		$buttonOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
+		$form2.AcceptButton = $buttonOK  # Нажатие Enter = ОК
+
+		# Добавляем кнопку в форму
+		$form2.Controls.Add($buttonOK)
+
+		# Показываем окно и ждём нажатия
+		$form2.ShowDialog() | Out-Null
+	}
 } else {
     Write-Host "Файл не найден"
 	Show-RetryDialog -Message "Не удалось сделать резервную копию диска ${driveLetter}, убедитесь, что диск не смонтирован в TrueCrypt"
