@@ -12,7 +12,7 @@ $blockSize = $config.blockSize
 $ddPath = Join-Path $rootPath "dd.exe"
 
 $backupScriptName = $config.backupScriptName
-$scriptPath = Join-Path $rootPath $backupScriptName
+$scriptPath = $MyInvocation.MyCommand.Definition
 
 # Функция: Показать окно с кнопкой "Повторить"
 function Show-RetryDialog {
@@ -115,15 +115,25 @@ $form.Show()
 $form.Refresh()
 
 trap {
-    $form.Close()
-    exit 1
+    if ($form){
+        $form.Close()
+    }
 }
 
 
 # Получить размер диска
-$partition = Get-Partition -DriveLetter $driveLetter
-$diskSize = $partition.Size
-$diskSizeMB = [math]::Round($diskSize / 1MB)
+try {
+    $partition = Get-Partition -DriveLetter $driveLetter
+	if (-not $partition) {
+        throw "Раздел с буквой диска $driveLetter не найден."
+    }
+    $diskSize = $partition.Size
+    $diskSizeMB = [math]::Round($diskSize / 1MB)
+}
+catch {
+    Show-RetryDialog -Message "Не удалось подключить том ${driveLetter}:. Убедитесь, что диск вставлен"
+    exit 1
+}
 
 # Создаём папку
 if (-not (Test-Path $backupFolder)) {
@@ -190,16 +200,18 @@ if (Test-Path $outputFile) {
 	if ($exitCode -ne 0)
 	{
 		if ($imageSize -ne $diskSize) {
+			Remove-Item $outputFile -Force
 			Show-RetryDialog -Message "Размер резервной копии не совпадает с размером диска, возможно диск был отключён во время копирования или закончилось место для резервных копий"
 			exit 1
 		}
 	}
 	if (-not (Get-Partition | Where-Object DriveLetter -eq $driveLetter)) {
+		Remove-Item $outputFile -Force
 		Show-RetryDialog -Message "Диск ${driveLetter}: был отключён во время копирования. Не отключайте и не монтируйте диск во время копирования."
 		exit 1
 	}
 	$progressBar.Value = 100
-	
+	$form.Close()
 	Write-Host "Файл существует"
 	# Подключаем библиотеки
 	Add-Type -AssemblyName System.Windows.Forms

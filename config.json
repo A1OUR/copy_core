@@ -1,6 +1,5 @@
 {
 	"driveLetter": "H",
 	"backupFolder": "F:\\workfolder\\copy_test",
-	"blockSize": 1,
-    "backupScriptName": "Backup-Folder.ps1"
+	"blockSize": 1
 }
