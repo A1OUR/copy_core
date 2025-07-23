@@ -1,6 +1,6 @@
 ﻿# === Настройки ===
 $driveLetter = "H"  # Буква тома, КУДА восстанавливаем
-$backupFile = "F:\workfolder\copy_test\backup_H_volume_20250722_222013.img"
+$backupFile = "F:\workfolder\copy_test\Резервная_копия_диска_H_20250723_144908.img"
 $ddPath = "F:\workfolder\copy_core\dd.exe"  # Путь к dd.exe
 
 # ========================================
@@ -73,3 +73,5 @@ if ($exitCode -eq 0) {
     Write-Host "   • Проверьте, что файл бэкапа не повреждён"
     Write-Host "   • Запустите PowerShell от имени АДМИНИСТРАТОРА"
 }
+
+pause

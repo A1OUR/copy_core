@@ -9,41 +9,10 @@ $config = Get-Content -Path $configPath -Raw | ConvertFrom-Json
 $driveLetter = $config.driveLetter
 $backupFolder = $config.backupFolder
 $blockSize = $config.blockSize
-$ddPath = $config.ddPath
+$ddPath = Join-Path $rootPath "dd.exe"
 
 $backupScriptName = $config.backupScriptName
 $scriptPath = Join-Path $rootPath $backupScriptName
-
-# ========================================
-# ========================================
-# Функция: Показать окно "Идёт копирование"
-# ========================================
-
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
-
-# Создаём форму
-$form = New-Object System.Windows.Forms.Form
-$form.Text = "Выполнение копирования"
-$form.Size = New-Object System.Drawing.Size(350, 150)
-$form.StartPosition = "CenterScreen"  # Окно по центру экрана
-$form.FormBorderStyle = "FixedDialog"
-$form.MaximizeBox = $false            # Без кнопки максимизации
-
-# Добавляем метку (подпись)
-$label = New-Object System.Windows.Forms.Label
-$label.Text = "Производится резервное копирование, пожалуйста не монтируйте и не извлекайте диск"
-$label.Location = New-Object System.Drawing.Point(30, 40)
-$label.Size = New-Object System.Drawing.Size(300, 23)
-$form.Controls.Add($label)
-
-# Показываем форму
-$form.Show()
-
-trap {
-    $form.Close()
-    exit 1
-}
 
 # Функция: Показать окно с кнопкой "Повторить"
 function Show-RetryDialog {
@@ -109,6 +78,53 @@ if (-not (Get-Partition | Where-Object DriveLetter -eq $driveLetter)) {
     exit 1
 }
 
+# ========================================
+# Показать окно "Идёт копирование"
+# ========================================
+
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# Создаём форму
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Выполнение копирования"
+$form.Size = New-Object System.Drawing.Size(400, 150)
+$form.StartPosition = "CenterScreen"  # Окно по центру экрана
+$form.FormBorderStyle = "FixedDialog"
+$form.MaximizeBox = $false            # Без кнопки максимизации
+
+# Добавляем метку (подпись)
+$label = New-Object System.Windows.Forms.Label
+$label.Text = "Производится резервное копирование, пожалуйста не монтируйте и не извлекайте диск"
+$label.Location = New-Object System.Drawing.Point(30, 20)
+$label.Size = New-Object System.Drawing.Size(300, 30)
+$form.Controls.Add($label)
+
+# Прогресс-бар
+$progressBar = New-Object System.Windows.Forms.ProgressBar
+$progressBar.Location = New-Object System.Drawing.Point(20, 70)
+$progressBar.Size = New-Object System.Drawing.Size(340, 30)
+$progressBar.Minimum = 0
+$progressBar.Maximum = 100
+$progressBar.Value = 0
+$progressBar.Step = 1
+$form.Controls.Add($progressBar)
+
+# Показываем форму
+$form.Show()
+$form.Refresh()
+
+trap {
+    $form.Close()
+    exit 1
+}
+
+
+# Получить размер диска
+$partition = Get-Partition -DriveLetter $driveLetter
+$diskSize = $partition.Size
+$diskSizeMB = [math]::Round($diskSize / 1MB)
+
 # Создаём папку
 if (-not (Test-Path $backupFolder)) {
     New-Item -ItemType Directory -Path $backupFolder -Force | Out-Null
@@ -120,59 +136,105 @@ $outputFile = Join-Path $backupFolder "Резервная_копия_диска_
 
 # Команда
 $source = "\\.\${driveLetter}:"
-$arguments = "if=`"$source`" of=`"$outputFile`" bs=${blockSize} --progress"
+$arguments = "if=`"$source`" of=`"$outputFile`" bs=${blockSize}M --progress"
 
-# Запуск
+# === ЗАПУСК DD С КОНТРОЛЕМ ПРОГРЕССА ===
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = $ddPath
+$psi.Arguments = $arguments
+$psi.UseShellExecute = $false
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$psi.CreateNoWindow = $true
 
-Start-Process -FilePath $ddPath -ArgumentList $arguments -Wait -NoNewWindow
+$process = New-Object System.Diagnostics.Process
+$process.StartInfo = $psi
+$process.Start() | Out-Null
+$process.PriorityClass = "Idle"  # Чтобы не нагружать систему
+
+# Переменная для отслеживания обработанных байтов
+$processedBytes = 0
+
+# Читаем stderr (там выводится прогресс от dd)
+while (!$process.StandardError.EndOfStream) {
+    $line = $process.StandardError.ReadLine()
+    if ($line) {
+        if ($line -match '(\d+)M') {
+            $captured = $matches[1]
+            $processedBytes = [long]$captured
+
+            # Обновляем прогресс-бар
+            $percent = [Math]::Min(100, [Math]::Floor(($processedBytes / $diskSizeMB) * 100))
+			if ($percent -gt 100) {
+				$progressBar.Value = 100
+			}
+			else {
+            $progressBar.Value = $percent
+            $form.Refresh()
+			}
+        }
+    }
+}
+
+# Дожидаемся завершения
+$process.WaitForExit()
+
+# Теперь можно получить код выхода
+$exitCode = $process.ExitCode
+
 if (Test-Path $outputFile) {
 	# Получаем размер образа
 	$imageSize = (Get-Item $outputFile).Length
-	$partition = Get-Partition -DriveLetter $driveLetter
-	$diskSize = $partition.Size
 
 	# Сравнение
-	if ($imageSize -ne $diskSize) {
-		Show-RetryDialog -Message "Размер резервной копии не совпадает с размером диска, возможно диск был отключён во время копирования или закончилось место для резервных копий"
+	if ($exitCode -ne 0)
+	{
+		if ($imageSize -ne $diskSize) {
+			Show-RetryDialog -Message "Размер резервной копии не совпадает с размером диска, возможно диск был отключён во время копирования или закончилось место для резервных копий"
+			exit 1
+		}
+	}
+	if (-not (Get-Partition | Where-Object DriveLetter -eq $driveLetter)) {
+		Show-RetryDialog -Message "Диск ${driveLetter}: был отключён во время копирования. Не отключайте и не монтируйте диск во время копирования."
 		exit 1
 	}
-	else {
-		Write-Host "Файл существует"
-		# Подключаем библиотеки
-		Add-Type -AssemblyName System.Windows.Forms
-		Add-Type -AssemblyName System.Drawing
+	$progressBar.Value = 100
+	
+	Write-Host "Файл существует"
+	# Подключаем библиотеки
+	Add-Type -AssemblyName System.Windows.Forms
+	Add-Type -AssemblyName System.Drawing
 
-		# Создаём форму
-		$form2 = New-Object System.Windows.Forms.Form
-		$form2.Text = "Информация"
-		$form2.Size = New-Object System.Drawing.Size(300, 150)
-		$form2.StartPosition = "CenterScreen"
-		$form2.TopMost = $true
-		$form2.FormBorderStyle = "FixedDialog"  # Нельзя изменять размер
-		$form2.MaximizeBox = $false
-		$form2.MinimizeBox = $false
+	# Создаём форму
+	$form2 = New-Object System.Windows.Forms.Form
+	$form2.Text = "Информация"
+	$form2.Size = New-Object System.Drawing.Size(300, 150)
+	$form2.StartPosition = "CenterScreen"
+	$form2.TopMost = $true
+	$form2.FormBorderStyle = "FixedDialog"  # Нельзя изменять размер
+	$form2.MaximizeBox = $false
+	$form2.MinimizeBox = $false
 
-		# Метка (текст)
-		$label2 = New-Object System.Windows.Forms.Label
-		$label2.Location = New-Object System.Drawing.Point(30, 30)
-		$label2.Size = New-Object System.Drawing.Size(250, 40)
-		$label2.Text = "Резервное копирование завершено"
-		$form2.Controls.Add($label2)
+	# Метка (текст)
+	$label2 = New-Object System.Windows.Forms.Label
+	$label2.Location = New-Object System.Drawing.Point(30, 30)
+	$label2.Size = New-Object System.Drawing.Size(250, 40)
+	$label2.Text = "Резервное копирование завершено"
+	$form2.Controls.Add($label2)
 
-		# Кнопка "ОК"
-		$buttonOK = New-Object System.Windows.Forms.Button
-		$buttonOK.Location = New-Object System.Drawing.Point(100, 80)
-		$buttonOK.Size = New-Object System.Drawing.Size(100, 30)
-		$buttonOK.Text = "ОК"
-		$buttonOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
-		$form2.AcceptButton = $buttonOK  # Нажатие Enter = ОК
+	# Кнопка "ОК"
+	$buttonOK = New-Object System.Windows.Forms.Button
+	$buttonOK.Location = New-Object System.Drawing.Point(100, 80)
+	$buttonOK.Size = New-Object System.Drawing.Size(100, 30)
+	$buttonOK.Text = "ОК"
+	$buttonOK.DialogResult = [System.Windows.Forms.DialogResult]::OK
+	$form2.AcceptButton = $buttonOK  # Нажатие Enter = ОК
 
-		# Добавляем кнопку в форму
-		$form2.Controls.Add($buttonOK)
+	# Добавляем кнопку в форму
+	$form2.Controls.Add($buttonOK)
 
-		# Показываем окно и ждём нажатия
-		$form2.ShowDialog() | Out-Null
-	}
+	# Показываем окно и ждём нажатия
+	$form2.ShowDialog() | Out-Null
 } else {
     Write-Host "Файл не найден"
 	Show-RetryDialog -Message "Не удалось сделать резервную копию диска ${driveLetter}, убедитесь, что диск не смонтирован в TrueCrypt"
