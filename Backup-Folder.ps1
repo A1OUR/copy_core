@@ -25,9 +25,11 @@ Function _Disable-X {
 
     #Disable X Button
     [Win32.NativeMethods]::EnableMenuItem($hMenu, $SC_CLOSE, $MF_DISABLED) | Out-Null
+	
 }
 
 _Disable-X
+
 # === Настройки ===
 $rootPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $configPath = Join-Path $rootPath "config.json"
@@ -46,7 +48,6 @@ function Show-RetryDialog {
     param(
         [string]$Message = "Произошла ошибка при выполнении резервного копирования."
     )
-	if ($form) { $form.Close() }
     Add-Type -AssemblyName System.Windows.Forms
 
     $form = New-Object System.Windows.Forms.Form
@@ -153,9 +154,6 @@ $form.MaximizeBox = $false
 $form.MinimizeBox = $false
 $form.TopMost = $true  # Поверх всех окон
 $form.ControlBox = $false
-$form.Add_Closing({
-    $_.Cancel = $true
-})
 # Метка
 $label = New-Object System.Windows.Forms.Label
 $label.Text = "Производится резервное копирование, пожалуйста, не извлекайте диск"
@@ -175,8 +173,6 @@ $form.Controls.Add($progressBar)
 
 # Показываем форму
 $form.Show()
-$form.Refresh()
-
 # Ловим Ctrl+C или закрытие окна
 trap {
     $Global:CancelBackup = $true
@@ -231,13 +227,7 @@ while (!$process.StandardError.EndOfStream) {
     }
 }
 
-# Дожидаемся завершения (или принудительного завершения)
-if (!$process.HasExited) {
-    $process.WaitForExit(2000)  # Ждём 2 секунды
-    if (!$process.HasExited) {
-        $process.Kill()
-    }
-}
+$process.WaitForExit()  # Ждём 2 секунды
 
 # Завершаем
 $exitCode = $process.ExitCode
@@ -262,7 +252,6 @@ if (Test-Path $outputFile) {
 		exit 1
 	}
 	$progressBar.Value = 100
-	$form.Close()
 	Rename-Item -Path $outputFile -NewName (Split-Path $outputFileFinal -Leaf)
 	Write-Host "Резервная копия создана"
 	# Подключаем библиотеки
