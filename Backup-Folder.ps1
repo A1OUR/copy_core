@@ -20,6 +20,7 @@ $scriptPath = Join-Path $rootPath $backupScriptName
 # ========================================
 
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
 
 # Создаём форму
 $form = New-Object System.Windows.Forms.Form
