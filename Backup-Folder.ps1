@@ -98,24 +98,11 @@ function Show-RetryDialog {
     }
 }
 
-# Уборка мусора после предыдущего копирования
-<# $process = Get-Process -Name "dd" -ErrorAction SilentlyContinue
-if ($process) {
-	Start-Sleep -Seconds 1
-	Show-RetryDialog -Message "Отмена копирования. Не запускайте следующее копирование пока не было завершено предыдущее."
-	exit 1
-}
-
-if (Test-Path $outputFile) {
-	Remove-Item $outputFile -Force
-} #>
-
 # Проверка dd.exe
 if (-not (Test-Path $ddPath)) {
     Show-RetryDialog -Message "Не найден dd.exe: $ddPath"
     exit 1
 }
-
 
 # Получить размер диска
 try {

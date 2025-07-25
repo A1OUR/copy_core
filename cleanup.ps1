@@ -6,11 +6,14 @@ $backupFolder = $config.backupFolder
 $outputFile = Join-Path $backupFolder "Temp.img"
 
 # Остановка dd.exe по имени
-$process = Get-Process -Name "dd" -ErrorAction SilentlyContinue
-if ($process) {
-    $process | Stop-Process -Force
-	Start-Sleep -Seconds 1
-	if (Test-Path $outputFile) {
-		Remove-Item $outputFile -Force
+if (Test-Path $outputFile) {
+	$process = Get-Process -Name "dd" -ErrorAction SilentlyContinue
+	if ($process) {
+		$process | Stop-Process -Force
+		Start-Sleep -Seconds 1
 	}
+}
+
+if (Test-Path $outputFile) {
+	Remove-Item $outputFile -Force
 }
