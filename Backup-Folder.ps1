@@ -1,4 +1,6 @@
 ﻿# Настройка кодировки для текущей сессии
+Clear-Host
+Write-Host "Идёт подготовка к резервному копированию, подождите"
 [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding("windows-1251")
 # Отключаем кнопку "Закрыть" (крестик) в заголовке окна
 Function _Disable-X {
@@ -30,6 +32,7 @@ Function _Disable-X {
 
 _Disable-X
 
+
 # === Настройки ===
 $rootPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $configPath = Join-Path $rootPath "config.json"
@@ -42,6 +45,8 @@ $ddPath = Join-Path $rootPath "dd.exe"
 
 $backupScriptName = $config.backupScriptName
 $scriptPath = $MyInvocation.MyCommand.Definition
+$outputFile = Join-Path $backupFolder "Temp.img"
+
 
 # Функция: Показать окно с кнопкой "Повторить"
 function Show-RetryDialog {
@@ -93,6 +98,17 @@ function Show-RetryDialog {
     }
 }
 
+# Уборка мусора после предыдущего копирования
+<# $process = Get-Process -Name "dd" -ErrorAction SilentlyContinue
+if ($process) {
+	Start-Sleep -Seconds 1
+	Show-RetryDialog -Message "Отмена копирования. Не запускайте следующее копирование пока не было завершено предыдущее."
+	exit 1
+}
+
+if (Test-Path $outputFile) {
+	Remove-Item $outputFile -Force
+} #>
 
 # Проверка dd.exe
 if (-not (Test-Path $ddPath)) {
@@ -101,7 +117,6 @@ if (-not (Test-Path $ddPath)) {
 }
 
 
-$outputFile = Join-Path $backupFolder "Temp.img"
 # Получить размер диска
 try {
     $partition = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop
@@ -189,14 +204,7 @@ if (-not (Test-Path $backupFolder)) {
 
 # Имя файла
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-if (Test-Path $outputFile) {
-	Remove-Item $outputFile -Force
-}
 $outputFileFinal = Join-Path $backupFolder "Резервная_копия_диска_${driveLetter}_${timestamp}.img"
-
-# Команда
-$source = "\\.\${driveLetter}:"
-$arguments = "if=`"$source`" of=`"$outputFile`" bs=${blockSize}M --progress"
 
 # === ЗАПУСК DD С КОНТРОЛЕМ ПРОГРЕССА И ОТМЕНОЙ ===
 $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -242,7 +250,6 @@ if (Test-Path $outputFile) {
 	{
 		if ($imageSize -ne $diskSize) {
 			Remove-Item $outputFile -Force
-			Show-RetryDialog -Message "Размер резервной копии не совпадает с размером диска, возможно диск был отключён во время копирования или закончилось место для резервных копий"
 			exit 1
 		}
 	}
