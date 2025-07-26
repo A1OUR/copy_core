@@ -1,6 +1,6 @@
 ﻿# === Настройки ===
 $driveLetter = "H"  # Буква тома, КУДА восстанавливаем
-$backupFile = "F:\workfolder\copy_test\Резервная_копия_диска_H_20250725_091249.img"
+$backupFile = "F:\workfolder\copy_test\Резервная_копия_диска_H_20250725_095943.img"
 $ddPath = "F:\workfolder\copy_core\dd.exe"  # Путь к dd.exe
 
 # ========================================

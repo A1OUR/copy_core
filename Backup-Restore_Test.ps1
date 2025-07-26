@@ -1,6 +1,6 @@
 ﻿# Настройка кодировки для текущей сессии
 Clear-Host
-Write-Host "Идёт подготовка к резервному копированию, подождите"
+Write-Host "Идёт подготовка к восстановлению резервной копии, подождите"
 [Console]::OutputEncoding = [System.Text.Encoding]::GetEncoding("windows-1251")
 # Отключаем кнопку "Закрыть" (крестик) в заголовке окна
 Function _Disable-X {
@@ -44,18 +44,17 @@ $blockSize = $config.blockSize
 $ddPath = Join-Path $rootPath "dd.exe"
 
 $scriptPath = $MyInvocation.MyCommand.Definition
-$outputFile = Join-Path $backupFolder "Temp.img"
 
 
 # Функция: Показать окно с кнопкой "Повторить"
 function Show-RetryDialog {
     param(
-        [string]$Message = "Произошла ошибка при выполнении резервного копирования."
+        [string]$Message = "Произошла ошибка при выполнении восстановления."
     )
     Add-Type -AssemblyName System.Windows.Forms
 
     $form = New-Object System.Windows.Forms.Form
-    $form.Text = "Ошибка резервного копирования"
+    $form.Text = "Ошибка восстановления резервной копии"
     $form.Size = New-Object System.Drawing.Size(400, 180)
     $form.StartPosition = "CenterScreen"
     $form.FormBorderStyle = "FixedDialog"
@@ -103,42 +102,152 @@ if (-not (Test-Path $ddPath)) {
     exit 1
 }
 
-# Получить размер диска
+# Проверка наличия диска
+
 try {
     $partition = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop
 	if (-not $partition) {
         throw "Раздел с буквой диска $driveLetter не найден."
 	}
-    $diskSize = $partition.Size
-    $diskSizeMB = [Math]::Round($diskSize / 1MB)
-
-    Write-Host "Размер диска ${driveLetter}: составляет ${diskSizeMB} МБ"
-
-    # Проверка: хватит ли места для сохранения файла образа
-    $outputDir = Split-Path -Path $outputFile -Parent
-
-    # Получаем диск, на котором будет сохраняться файл
-    $outputDriveLetter = (Get-Item $outputDir).PSDrive.Name
-    $outputPSDrive = Get-PSDrive -Name $outputDriveLetter -PSProvider FileSystem -ErrorAction Stop
-    $freeSpace = $outputPSDrive.Free
-
-    if ($freeSpace -lt $diskSize) {
-        $requiredMB = [Math]::Round($diskSize / 1MB)
-        $availableMB = [Math]::Round($freeSpace / 1MB)
-        Show-RetryDialog -Message "Недостаточно места для сохранения образа. Требуется ${requiredMB} МБ, но на диске ${outputDriveLetter}: свободно только ${availableMB} МБ."
-        exit 1
-    }
 }
 catch {
 	Show-RetryDialog -Message "Не удалось подключить том ${driveLetter}:. Убедитесь, что диск вставлен."
     exit 1
 }
 
+if (-not (Test-Path $backupFolder)) {
+    New-Item -ItemType Directory -Path $backupFolder -Force | Out-Null
+}
+
+Add-Type -AssemblyName System.Windows.Forms
+
+# Создаем объект OpenFileDialog
+$openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
+$openFileDialog.Title = "Выберите резервную копию для восстановления"
+$openFileDialog.Filter = "Все файлы (*.*)|*.img*"
+
+# Устанавливаем путь по умолчанию
+$openFileDialog.InitialDirectory = $backupFolder
+
+# Открываем диалоговое окно
+$result = $openFileDialog.ShowDialog()
+
+# Если пользователь нажал "ОК"
+if ($result -eq 'OK') {
+    # Сохраняем путь к файлу в переменную
+    $selectedFilePath = $openFileDialog.FileName
+    Write-Host "Выбранный файл: $selectedFilePath"
+} else {
+    exit 0
+}
+
+$fileName = [System.IO.Path]::GetFileName($selectedFilePath)
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Подтверждение копирования"
+$form.Size = New-Object System.Drawing.Size(400, 220)
+$form.StartPosition = "CenterScreen"
+$form.FormBorderStyle = "FixedDialog"
+$form.TopMost = $true
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+
+$label = New-Object System.Windows.Forms.Label
+$label.Location = New-Object System.Drawing.Point(20, 20)
+$label.Size = New-Object System.Drawing.Size(350, 60)
+$label.Text = "Для восстановления выбран файл: `n${fileName}`n Продолжить?"
+$form.Controls.Add($label)
+
+$buttonYes = New-Object System.Windows.Forms.Button
+$buttonYes.Location = New-Object System.Drawing.Point(20, 90)
+$buttonYes.Size = New-Object System.Drawing.Size(100, 30)
+$buttonYes.Text = "Да"
+$buttonYes.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$form.Controls.Add($buttonYes)
+
+$buttonChooseAnother = New-Object System.Windows.Forms.Button
+$buttonChooseAnother.Location = New-Object System.Drawing.Point(130, 90)
+$buttonChooseAnother.Size = New-Object System.Drawing.Size(130, 30)
+$buttonChooseAnother.Text = "Выбрать другой файл"
+$buttonChooseAnother.DialogResult = [System.Windows.Forms.DialogResult]::Retry
+$form.Controls.Add($buttonChooseAnother)
+
+$buttonExit = New-Object System.Windows.Forms.Button
+$buttonExit.Location = New-Object System.Drawing.Point(270, 90)
+$buttonExit.Size = New-Object System.Drawing.Size(100, 30)
+$buttonExit.Text = "Отмена"
+$buttonExit.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+$form.Controls.Add($buttonExit)
+
+$form.AcceptButton = $buttonYes
+$form.CancelButton = $buttonExit
+
+$result = $form.ShowDialog()
+
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+    # Продолжаем выполнение основного скрипта
+    # Ваш код здесь
+	Write-Host "Продолжаение."
+} elseif ($result -eq [System.Windows.Forms.DialogResult]::Retry) {
+    # Перезапускаем текущий скрипт
+    & powershell -ExecutionPolicy Bypass -File "`"$scriptPath`""
+    exit 0
+} else {
+    exit 1
+}
+
+
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Подтверждение копирования"
+$form.Size = New-Object System.Drawing.Size(400, 220)
+$form.StartPosition = "CenterScreen"
+$form.FormBorderStyle = "FixedDialog"
+$form.TopMost = $true
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+
+$label = New-Object System.Windows.Forms.Label
+$label.Location = New-Object System.Drawing.Point(20, 20)
+$label.Size = New-Object System.Drawing.Size(350, 60)
+$label.Text = "ВНИМАНИЕ: Все данные на ${driveLetter}: будут БЕЗВОЗВРАТНО УНИЧТОЖЕНЫ!`nПродолжить?"
+$form.Controls.Add($label)
+
+$buttonYes = New-Object System.Windows.Forms.Button
+$buttonYes.Location = New-Object System.Drawing.Point(20, 90)
+$buttonYes.Size = New-Object System.Drawing.Size(100, 30)
+$buttonYes.Text = "Да"
+$buttonYes.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$form.Controls.Add($buttonYes)
+
+$buttonExit = New-Object System.Windows.Forms.Button
+$buttonExit.Location = New-Object System.Drawing.Point(270, 90)
+$buttonExit.Size = New-Object System.Drawing.Size(100, 30)
+$buttonExit.Text = "Отмена"
+$buttonExit.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+$form.Controls.Add($buttonExit)
+
+$form.AcceptButton = $buttonYes
+$form.CancelButton = $buttonExit
+
+$result = $form.ShowDialog()
+
+if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+    # Продолжаем выполнение основного скрипта
+    # Ваш код здесь
+	Write-Host "Продолжаение."
+} else {
+    exit 1
+}
+
+pause
+<# 
+
 # ========================================
 # Показать окно "Идёт копирование"
 # ========================================
-Write-Host "НЕ ЗАКРЫВАЙТЕ ЭТО ОКНО ПОКА ИДЁТ КОПИРОВАНИЕ"
-Write-Host "Для отмены копирования нажмите Ctrl+C в этом окне"
+Write-Host "НЕ ЗАКРЫВАЙТЕ ЭТО ОКНО ПОКА ИДЁТ ВОССТАНОВЛЕНИЕ РЕЗЕРВНОЙ КОПИИ"
+Write-Host "Для отмены восстановления нажмите Ctrl+C в этом окне"
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
@@ -181,11 +290,6 @@ trap {
         $process.Kill()
     }
     if ($form) { $form.Close() }
-}
-
-# Создаём папку
-if (-not (Test-Path $backupFolder)) {
-    New-Item -ItemType Directory -Path $backupFolder -Force | Out-Null
 }
 
 # Имя файла
@@ -285,4 +389,4 @@ if (Test-Path $outputFile) {
     Write-Host "Резервная копия не создана"
 	Show-RetryDialog -Message "Не удалось сделать резервную копию диска ${driveLetter}, убедитесь, что диск вставлен и не смонтирован в TrueCrypt"
 	exit 1
-}
+} #>
