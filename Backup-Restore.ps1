@@ -96,6 +96,13 @@ function Show-RetryDialog {
     }
 }
 
+# Проверка не запущено ли резервное копирование
+$process = Get-Process -Name "dd" -ErrorAction SilentlyContinue
+if ($process) {
+	Show-RetryDialog -Message "Во время восстановления резервной копии резервное копирование невозможно."
+    exit 1
+}
+
 # Проверка dd.exe
 if (-not (Test-Path $ddPath)) {
     Show-RetryDialog -Message "Не найден dd.exe: $ddPath"
@@ -124,7 +131,7 @@ Add-Type -AssemblyName System.Windows.Forms
 # Создаем объект OpenFileDialog
 $openFileDialog = New-Object System.Windows.Forms.OpenFileDialog
 $openFileDialog.Title = "Выберите резервную копию для восстановления"
-$openFileDialog.Filter = "Все файлы (*.*)|*.img*"
+$openFileDialog.Filter = "IMG файлы (*.img)|*.img"
 
 # Устанавливаем путь по умолчанию
 $openFileDialog.InitialDirectory = $backupFolder
@@ -155,7 +162,7 @@ $form.MinimizeBox = $false
 $label = New-Object System.Windows.Forms.Label
 $label.Location = New-Object System.Drawing.Point(20, 20)
 $label.Size = New-Object System.Drawing.Size(350, 60)
-$label.Text = "Для восстановления выбран файл: `n${fileName}`n Продолжить?"
+$label.Text = "Для восстановления выбран файл: `n${fileName}`n`nПродолжить?"
 $form.Controls.Add($label)
 
 $buttonYes = New-Object System.Windows.Forms.Button
@@ -208,7 +215,7 @@ $form.MinimizeBox = $false
 $label = New-Object System.Windows.Forms.Label
 $label.Location = New-Object System.Drawing.Point(20, 20)
 $label.Size = New-Object System.Drawing.Size(350, 60)
-$label.Text = "ВНИМАНИЕ: Все данные на ${driveLetter}: будут БЕЗВОЗВРАТНО УНИЧТОЖЕНЫ!`nПродолжить?"
+$label.Text = "ВНИМАНИЕ: Все данные на ${driveLetter}: будут БЕЗВОЗВРАТНО УНИЧТОЖЕНЫ!`n`nПродолжить?"
 $form.Controls.Add($label)
 
 $buttonYes = New-Object System.Windows.Forms.Button
@@ -326,7 +333,7 @@ $exitCode = $process.ExitCode
 $form.Close()
 
 if ($line -match 'Error opening output file') {
-	Show-RetryDialog -Message "Не удалось сделать восстановить резервную копию диска ${driveLetter}, убедитесь, что диск вставлен и не смонтирован в TrueCrypt"
+	Show-RetryDialog -Message "Не удалось сделать восстановить резервную копию диска ${driveLetter}, убедитесь, что диск вставлен, не смонтирован в TrueCrypt и в данный момент не производится резервное копирование"
 	exit 1
 }
 if (-not (Get-Partition | Where-Object DriveLetter -eq $driveLetter)) {
