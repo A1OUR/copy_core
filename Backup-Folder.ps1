@@ -97,6 +97,14 @@ function Show-RetryDialog {
     }
 }
 
+# Проверка не запущено ли восстановление
+$process = Get-Process -Name "dd" -ErrorAction SilentlyContinue
+if ($process) {
+	Show-RetryDialog -Message "Во время восстановления резервной копии резервное копирование невозможно."
+    exit 1
+}
+
+
 # Проверка dd.exe
 if (-not (Test-Path $ddPath)) {
     Show-RetryDialog -Message "Не найден dd.exe: $ddPath"
@@ -217,8 +225,9 @@ while (!$process.StandardError.EndOfStream) {
         $processedMB = [int]$matches[1]
         $percent = [Math]::Min(100, [Math]::Floor(($processedMB * 1MB) / $diskSize * 100))
         $progressBar.Value = $percent
-        $form.Refresh()
     }
+	$form.Refresh()
+	[System.Windows.Forms.Application]::DoEvents()
 }
 
 $process.WaitForExit()  # Ждём 2 секунды
