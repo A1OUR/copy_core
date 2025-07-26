@@ -325,6 +325,14 @@ $process.WaitForExit()
 $exitCode = $process.ExitCode
 $form.Close()
 
+if ($line -match 'Error opening output file') {
+	Show-RetryDialog -Message "Не удалось сделать восстановить резервную копию диска ${driveLetter}, убедитесь, что диск вставлен и не смонтирован в TrueCrypt"
+	exit 1
+}
+if (-not (Get-Partition | Where-Object DriveLetter -eq $driveLetter)) {
+	Show-RetryDialog -Message "Диск ${driveLetter}: был отключён во время восстановления. Не отключайте и не монтируйте диск во время восстановления."
+	exit 1
+}
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing

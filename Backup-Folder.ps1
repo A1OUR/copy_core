@@ -253,7 +253,6 @@ if (Test-Path $outputFile) {
 		Show-RetryDialog -Message "Диск ${driveLetter}: был отключён во время копирования. Не отключайте и не монтируйте диск во время копирования."
 		exit 1
 	}
-	$progressBar.Value = 100
 	Rename-Item -Path $outputFile -NewName (Split-Path $outputFileFinal -Leaf)
 	Write-Host "Резервная копия создана"
 	# Подключаем библиотеки
