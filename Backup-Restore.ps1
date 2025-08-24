@@ -318,7 +318,7 @@ $imageSize = [Math]::Round((Get-Item $selectedFilePath).Length / 1MB)
 # Читаем stderr построчно (там выводится прогресс)
 while (!$process.StandardError.EndOfStream) {
 
-    $line = $process.StandardError.ReadLine()
+    $line = $process.StandardError.ReadLine().Replace(",", "")
     if ($line -match '(\d+)M') {
         $processedMB = [int]$matches[1]
         $percent = [Math]::Min(100, [Math]::Floor($processedMB / $imageSize * 100))
