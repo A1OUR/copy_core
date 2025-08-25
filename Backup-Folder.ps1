@@ -225,6 +225,7 @@ while (!$process.StandardError.EndOfStream) {
         $processedMB = [int]$matches[1]
         $percent = [Math]::Min(100, [Math]::Floor(($processedMB * 1MB) / $diskSize * 100))
         $progressBar.Value = $percent
+		$label.Text = "Производится резервное копирование, пожалуйста, не извлекайте диск ${percent}%"
     }
 	$form.Refresh()
 	[System.Windows.Forms.Application]::DoEvents()

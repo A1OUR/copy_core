@@ -323,6 +323,7 @@ while (!$process.StandardError.EndOfStream) {
         $processedMB = [int]$matches[1]
         $percent = [Math]::Min(100, [Math]::Floor($processedMB / $imageSize * 100))
         $progressBar.Value = $percent
+		$label.Text = "Производится восстановление резервной копии, пожалуйста, не извлекайте диск ${percent}%"
     }
 	$form.Refresh()
 	[System.Windows.Forms.Application]::DoEvents()
