@@ -3,7 +3,7 @@
 $rootPath = Split-Path -Parent $MyInvocation.MyCommand.Definition
 $scriptPath = $MyInvocation.MyCommand.Definition
 $configFile = Join-Path $rootPath "config.txt"
-$Lines = Get-Content $ConfigFile | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" -and $_ -notmatch '^\s*#' }
+$Lines = Get-Content $ConfigFile -Encoding UTF8 | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" -and $_ -notmatch '^\s*#' }
 
 # Функция: Показать окно с кнопкой "Повторить"
 function Show-RetryDialog {
