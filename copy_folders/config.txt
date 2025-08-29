@@ -1,0 +1,7 @@
+[source]
+Z:\GAMES\Stalker\X-Ray SDK\level_editor\gamedata\ai
+[destination]
+E:\
+[folders]
+alife
+common
